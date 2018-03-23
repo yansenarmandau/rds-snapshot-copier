@@ -1,0 +1,14 @@
+{
+  "name": "rds-snapshot-copier",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "dependencies": {
+    "aws-sdk": "~2.63.0",
+    "dateformat": "~2.0.0",
+    "es6-promise": "~4.1.1",
+    "@slack/client": "~3.10.0"
+  },
+  "devDependencies": {
+    "lambda-local": "~1.4.2"
+  }
+}

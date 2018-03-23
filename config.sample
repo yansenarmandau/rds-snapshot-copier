@@ -1,0 +1,25 @@
+export AWS_PROFILE=default
+export AWS_DEFAULT_REGION=us-east-1
+
+export ENV=dev
+
+export DATABASE_INSTANCE_FILTER="(.*)"
+
+export COPY_RETRY_INTERVAL=2 # hours
+export MAINTAIN_X_SNAPSHOTS=7
+export SNAPSHOT_COPY_AGE_WARNING=4 # hours
+export SNAPSHOT_COPY_AGE_ALERT=8 # hours
+
+export DR_KMS_KEY=arn:aws:kms:us-west-2:123456789012:key/66259181-557c-4ab9-bee6-bae19800a162
+export DR_REGION=us-west-2
+
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+export SLACK_ALERTS_CHANNEL="#alerts"
+export SLACK_WARNINGS_CHANNEL="#warnings"
+
+export EVENT_TOPIC_NAME=rds-snapshot-copier-${ENV}
+
+export BUCKET=rds-snapshot-copier-${ENV}
+export RELEASE=$(date +%Y-%m-%d-%H%M)
+
+export STACK_NAME=rds-snapshot-copier-${ENV}

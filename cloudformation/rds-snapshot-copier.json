@@ -1,0 +1,187 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "RDS snapshot copier stack",
+    "Parameters": {
+        "DatabaseInstanceFilter": {
+            "Description": "Only perform DR copies for database instances matching this regex",
+            "Type": "String"
+        },
+        "CopyRetryInterval": {
+            "Description": "Check and potentially retry snapshot copies on this interval",
+            "Type": "String"
+        },
+        "MaintainXSnapshots": {
+            "Description": "Maintain this number of database snapshots per instance",
+            "Type": "String"
+        },
+        "SnapshotCopyAgeWarning": {
+            "Description": "Generate a warning if a snapshot is older than this many hours and hasnt been copied",
+            "Type": "String"
+        },
+        "SnapshotCopyAgeAlert": {
+            "Description": "Generate an alert if a snapshot is older than this many hours and hasnt been copied",
+            "Type": "String"
+        },
+        "SlackWebhookUrl": {
+            "Description": "Slack webhook URL",
+            "Type": "String"
+        },
+        "SlackAlertsChannel": {
+            "Description": "Slack channel alerts are sent to",
+            "Type": "String"
+        },
+        "SlackWarningsChannel": {
+            "Description": "Slack channel warnings are sent to",
+            "Type": "String"
+        },
+        "DisasterRecoveryKmsKey": {
+            "Description": "The ARN of the KMS key used for encrypting snapshots",
+            "Type": "String"
+        },
+        "DisasterRecoveryRegion": {
+            "Description": "The region that RDS snapshots are copied to",
+            "Type": "String"
+        },
+        "EventTopicName": {
+            "Description": "The SNS topic RDS events are delivered to",
+            "Type": "String"
+        },
+        "Release": {
+            "Description": "The release/version of rds-snapshot-copier",
+            "Type": "String"
+        },
+        "ArtifactBucket": {
+            "Description": "S3 bucket to locate lambda function",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "IamRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [ "lambda.amazonaws.com" ]
+                            },
+                            "Action": [ "sts:AssumeRole" ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "RDSSnapshotCopier",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "rds:DescribeDBInstances",
+                                        "rds:DescribeDBSnapshots",
+                                        "rds:CopyDBSnapshot",
+                                        "rds:DeleteDBSnapshot"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "EventTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "TopicName": { "Ref": "EventTopicName" },
+                "Subscription": [
+                    {
+                        "Endpoint": { "Fn::GetAtt": [ "Function", "Arn" ] },
+                        "Protocol": "lambda"
+                    }
+                ]
+            }
+        },
+        "Function": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description" : "Lambda function to copy RDS snapshots",
+                "Handler": "index.handler",
+                "Role": {
+                    "Fn::GetAtt": [ "IamRole", "Arn" ]
+                },
+                "Code": {
+                    "S3Bucket": { "Ref": "ArtifactBucket" },
+                    "S3Key": {"Fn::Join": ["/", [{ "Ref": "Release" }, "rds-snapshot-copier.zip"]]}
+                },
+                "Runtime": "nodejs6.10",
+                "Timeout": "300",
+                "Environment": {
+                    "Variables": {
+                        "DR_REGION": { "Ref": "DisasterRecoveryRegion" },
+                        "DR_KMS_KEY": { "Ref": "DisasterRecoveryKmsKey" },
+                        "MAINTAIN_X_SNAPSHOTS": { "Ref": "MaintainXSnapshots" },
+                        "SNAPSHOT_COPY_AGE_WARNING": { "Ref": "SnapshotCopyAgeWarning" },
+                        "SNAPSHOT_COPY_AGE_ALERT": { "Ref": "SnapshotCopyAgeAlert" },
+                        "SLACK_WEBHOOK_URL": { "Ref": "SlackWebhookUrl" },
+                        "SLACK_ALERTS_CHANNEL": { "Ref": "SlackAlertsChannel" },
+                        "SLACK_WARNINGS_CHANNEL": { "Ref": "SlackWarningsChannel" },
+                        "DATABASE_INSTANCE_FILTER": { "Ref": "DatabaseInstanceFilter" }
+                    }
+                }
+            }
+        },
+        "SnsInvokePermissions": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "FunctionName" : { "Ref" : "Function" },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "sns.amazonaws.com",
+                "SourceArn": { "Ref": "EventTopic" }
+            }
+        },
+        "EventSubscription": {
+            "Type" : "AWS::RDS::EventSubscription",
+            "Properties": {
+                "Enabled": true,
+                "SnsTopicArn": { "Ref": "EventTopic" },
+                "SourceType": "db-instance",
+                "EventCategories": ["backup"]
+            }
+        },
+        "ScheduledRule": {
+            "Type": "AWS::Events::Rule",
+            "Properties": {
+                "Description": "Trigger the RDS snapshot copier fxn",
+                "ScheduleExpression": { "Fn::Sub": "rate(${CopyRetryInterval} hours)" },
+                "State": "ENABLED",
+                "Targets": [{
+                    "Arn": { "Fn::GetAtt": ["Function", "Arn"] },
+                    "Id": { "Fn::Join": ["", ["Function", { "Ref": "Release" }]]}
+                }]
+            }
+        },
+        "EventsInvokePermissions": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "FunctionName" : { "Ref" : "Function" },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "events.amazonaws.com",
+                "SourceArn": { "Fn::GetAtt": ["ScheduledRule", "Arn"] }
+            }
+        }
+    }
+}
